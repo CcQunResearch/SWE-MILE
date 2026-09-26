@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "agents": {
+    "codeflow": {
+      "module": "rllm.harnesses.swe_scaffold",
+      "function": "CodeFlowScaffoldHarness",
+      "description": "Native-tool-call SWE scaffold with dedicated search, read_file, edit_file, execute_bash, and submit actions."
+    }
+  }
+}

@@ -1,0 +1,68 @@
+--- a/torch/distributed/fsdp/_flat_param.py
++++ b/torch/distributed/fsdp/_flat_param.py
+@@ -1260,12 +1260,16 @@
+         flat_param._local_shard = flat_param.data
+         if self._offload_params:
+             # Pin the memory for faster H2D transfer
+-            flat_param._local_shard = flat_param._local_shard.pin_memory()
++            from rllm.utils.pinned_memory import pin_fsdp_cpu_tensor
++            flat_param._local_shard = pin_fsdp_cpu_tensor(
++                flat_param._local_shard, purpose="parameter_shard", device=self.device
++            )
+             # Pre-allocate the sharded gradient on CPU to enable non-blocking
+             # D2H transfer during the backward pass
+-            flat_param._cpu_grad = torch.zeros_like(
+-                flat_param._local_shard, device=cpu_device
+-            ).pin_memory()
++            flat_param._cpu_grad = pin_fsdp_cpu_tensor(
++                torch.zeros_like(flat_param._local_shard, device=cpu_device),
++                purpose="gradient_shard", device=self.device,
++            )
+         if self._uses_param_mixed_precision:
+             # For parameter mixed precision, we maintain a low precision
+             # sharded tensor on the compute device to be all-gathered (for
+@@ -1337,7 +1341,7 @@
+             ret = True
+         elif self._offload_params and self.flat_param.device != self.device:
+             # NOTE: This creates a new tensor distinct from any attributes.
+-            self.flat_param_to(self.device, non_blocking=True)
++            self.flat_param_to(self.device, non_blocking=self.flat_param.is_pinned())
+             ret = True
+         self._check_on_compute_device(self.flat_param)
+         return ret
+@@ -1353,7 +1357,7 @@
+         # `copy_()` implicitly casts to the low precision
+         flat_param._mp_shard.copy_(  # type: ignore[attr-defined]
+             flat_param._local_shard.to(  # type: ignore[attr-defined]
+-                self.device, non_blocking=True
++                self.device, non_blocking=(flat_param._local_shard.device.type != "cpu" or flat_param._local_shard.is_pinned())
+             )
+         )
+         # Invariant: `_mp_shard` is always on the compute device.
+--- a/torch/distributed/fsdp/_runtime_utils.py
++++ b/torch/distributed/fsdp/_runtime_utils.py
+@@ -391,9 +391,11 @@
+         # We have to reallocate the _cpu_grad if optimizer overlap
+         # set the grad to None in the backward pass.
+         if handle and handle._offload_params and handle.flat_param._cpu_grad is None:
+-            handle.flat_param._cpu_grad = torch.zeros_like(
+-                handle.flat_param._local_shard, device=torch.device("cpu")
+-            ).pin_memory()
++            from rllm.utils.pinned_memory import pin_fsdp_cpu_tensor
++            handle.flat_param._cpu_grad = pin_fsdp_cpu_tensor(
++                torch.zeros_like(handle.flat_param._local_shard, device=torch.device("cpu")),
++                purpose="gradient_shard_reallocation", device=handle.device,
++            )
+ 
+         should_cast_forward_inputs = (
+             state._handle and not state._handle._force_full_precision
+@@ -981,7 +983,8 @@
+     # non_blocking=True won't work since the copy may have not finished before
+     # the optimizer step executes on CPU. If we want to use non-blocking=True
+     # here, we'll have to synchronize before using result on CPU.
+-    non_blocking = handle.uses_sharded_strategy and not handle._has_optim_in_backward
++    non_blocking = (handle.uses_sharded_strategy and not handle._has_optim_in_backward
++                    and handle.flat_param._cpu_grad.is_pinned())
+     handle.flat_param._cpu_grad.copy_(
+         grad_to_offload.detach(), non_blocking=non_blocking
+     )  # synchronized in the post-backward callback

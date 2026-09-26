@@ -1,0 +1,67 @@
+--- a/verl/utils/fsdp_utils.py
++++ b/verl/utils/fsdp_utils.py
+@@ -225,26 +225,14 @@
+ 
+ @torch.no_grad()
+ def offload_fsdp_optimizer(optimizer):
+-    if not optimizer.state:
+-        return
+-    for param_group in optimizer.param_groups:
+-        for param in param_group["params"]:
+-            state = optimizer.state[param]
+-            for key, value in state.items():
+-                if isinstance(value, torch.Tensor):
+-                    state[key] = value.to("cpu", non_blocking=True)
++    from rllm.utils.optimizer_offload import offload_optimizer_state
++    return offload_optimizer_state(optimizer)
+ 
+ 
+ @torch.no_grad()
+ def load_fsdp_optimizer(optimizer, device_id):
+-    if not optimizer.state:
+-        return
+-    for param_group in optimizer.param_groups:
+-        for param in param_group["params"]:
+-            state = optimizer.state[param]
+-            for key, value in state.items():
+-                if isinstance(value, torch.Tensor):
+-                    state[key] = value.to(device_id, non_blocking=True)
++    from rllm.utils.optimizer_offload import load_optimizer_state
++    return load_optimizer_state(optimizer, device_id)
+ 
+ 
+ @contextmanager
+--- a/verl/workers/engine/base.py
++++ b/verl/workers/engine/base.py
+@@ -260,8 +260,11 @@
+         self.engine.mode = self.mode
+ 
+     def __exit__(self, exc_type, exc_val, exc_tb):
+-        self._context_switch("cpu")
+-        self.engine.mode = None
++        from rllm.utils.optimizer_offload import cleanup_preserving_error
++        try:
++            cleanup_preserving_error([("offload", lambda: self._context_switch("cpu"))], exc_val)
++        finally:
++            self.engine.mode = None
+ 
+ 
+ class EngineRegistry:
+--- a/verl/workers/engine/fsdp/transformer_impl.py
++++ b/verl/workers/engine/fsdp/transformer_impl.py
+@@ -917,9 +917,12 @@
+ 
+     def __exit__(self, exc_type, exc_value, traceback):
+         assert isinstance(self.engine, FSDPEngine)
+-        set_ulysses_sequence_parallel_group(self.prev_sp_group)
+-        self.engine.optimizer_zero_grad()
+-        super().__exit__(exc_type, exc_value, traceback)
++        from rllm.utils.optimizer_offload import cleanup_preserving_error
++        cleanup_preserving_error([
++            ("restore_sequence_parallel_group", lambda: set_ulysses_sequence_parallel_group(self.prev_sp_group)),
++            ("optimizer_zero_grad", self.engine.optimizer_zero_grad),
++            ("engine_exit", lambda: super(EngineTrainModeCtx, self).__exit__(exc_type, exc_value, traceback)),
++        ], exc_value)
+ 
+ 
+ @EngineRegistry.register(model_type="language_model", backend=["fsdp", "fsdp2"], device=["cuda", "npu"])

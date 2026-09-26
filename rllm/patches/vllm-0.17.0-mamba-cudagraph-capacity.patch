@@ -1,0 +1,90 @@
+diff --git a/vllm/config/compilation.py b/vllm/config/compilation.py
+index 64332d2e809e..9cc2cbb49e45 100644
+--- a/vllm/config/compilation.py
++++ b/vllm/config/compilation.py
+@@ -1190,6 +1190,58 @@ def adjust_cudagraph_sizes_for_spec_decode(
+         self.max_cudagraph_capture_size = rounded_sizes[-1]
+         self.cudagraph_capture_sizes = rounded_sizes
+ 
++    def adjust_cudagraph_sizes_for_mamba_cache(
++        self, num_mamba_cache_blocks: int
++    ) -> None:
++        """Cap cudagraph capture sizes to available Mamba cache blocks.
++
++        For hybrid Mamba/attention models, the Mamba conv_state and
++        ssm_state tensors have their first dimension equal to num_blocks
++        (from KVCacheConfig). During CUDA graph capture the decode batch
++        size equals num_tokens, so capture sizes exceeding num_blocks
++        would cause out-of-bounds access in Mamba kernels.
++
++        See: https://github.com/vllm-project/vllm/issues/34094
++        """
++        if not self.cudagraph_capture_sizes or num_mamba_cache_blocks <= 0:
++            return
++
++        assert self.max_cudagraph_capture_size is not None
++
++        if num_mamba_cache_blocks >= self.max_cudagraph_capture_size:
++            return
++
++        capped_sizes = [
++            s for s in self.cudagraph_capture_sizes if s <= num_mamba_cache_blocks
++        ]
++
++        if len(capped_sizes) == 0:
++            logger.warning(
++                "No valid cudagraph capture sizes remain after capping "
++                "to Mamba cache blocks (%d). The smallest capture size "
++                "was %d. Disabling cudagraph capture. Consider reducing "
++                "max_num_seqs or increasing available GPU memory.",
++                num_mamba_cache_blocks,
++                self.cudagraph_capture_sizes[0],
++            )
++            self.cudagraph_capture_sizes = []
++            self.max_cudagraph_capture_size = 0
++            return
++
++        logger.warning(
++            "Capping cudagraph capture sizes from max %d to %d to fit "
++            "Mamba cache blocks (%d blocks available). This limits the "
++            "maximum batch size that can use CUDA graphs. To increase "
++            "this limit, reduce max_num_seqs or increase available GPU "
++            "memory.",
++            self.max_cudagraph_capture_size,
++            capped_sizes[-1],
++            num_mamba_cache_blocks,
++        )
++
++        self.max_cudagraph_capture_size = capped_sizes[-1]
++        self.cudagraph_capture_sizes = capped_sizes
++
+     def get_compile_ranges(self) -> list[Range]:
+         """Get the compile ranges for the compilation config."""
+         if self.compile_ranges_split_points is None:
+diff --git a/vllm/v1/worker/gpu_model_runner.py b/vllm/v1/worker/gpu_model_runner.py
+index e4ddefc8180f..8780568e7310 100644
+--- a/vllm/v1/worker/gpu_model_runner.py
++++ b/vllm/v1/worker/gpu_model_runner.py
+@@ -5700,6 +5700,22 @@ def _check_and_update_cudagraph_mode(
+                 self.uniform_decode_query_len, self.parallel_config.tensor_parallel_size
+             )
+ 
++        # If the model has Mamba layers and cudagraph mode includes FULL
++        # decode, cap cudagraph capture sizes to the number of available
++        # Mamba cache blocks. Each decode request needs one conv_state
++        # cache line, so capture batch sizes cannot exceed num_blocks.
++        # Only FULL decode graphs are affected because PIECEWISE captures
++        # run GDN/Mamba ops eagerly (prefill path, no causal_conv1d_update).
++        # See: https://github.com/vllm-project/vllm/issues/34094
++        if cudagraph_mode.has_full_cudagraphs():
++            has_mamba = any(
++                isinstance(g.kv_cache_spec, MambaSpec) for g in kv_cache_groups
++            )
++            if has_mamba and self.kv_cache_config is not None:
++                self.compilation_config.adjust_cudagraph_sizes_for_mamba_cache(
++                    self.kv_cache_config.num_blocks
++                )
++
+         # Trigger cudagraph dispatching keys initialization after
+         # resolved cudagraph mode.
+         self.compilation_config.cudagraph_mode = cudagraph_mode

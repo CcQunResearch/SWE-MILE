@@ -1,0 +1,12 @@
+--- a/ray/_private/worker.py
++++ b/ray/_private/worker.py
+@@ -930,7 +930,8 @@
+         # at the same time which can lead to failed imports
+         # TODO: We may be better off locking on all imports or injecting a lock
+         # into pickle.loads (https://github.com/ray-project/ray/issues/16304)
+-        with self.function_actor_manager.lock:
++        from rllm.utils.ray_lock_diagnostics import observe_deserialization_lock
++        with observe_deserialization_lock(self.function_actor_manager.lock, serialized_objects):
+             context = self.get_serialization_context()
+             return context.deserialize_objects(
+                 serialized_objects, object_refs, gpu_objects

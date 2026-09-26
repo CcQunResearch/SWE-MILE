@@ -1,0 +1,276 @@
+# Common, backend-agnostic configuration for rLLM
+
+data:
+  train_batch_size: 64
+  val_batch_size: -1
+  # When enabled, max_model_len is the sole prompt + cumulative-response
+  # budget. The legacy fixed prompt/response partitions remain available for
+  # other backends and compatibility mode.
+  dynamic_sequence_budget: false
+  max_prompt_length: 2048
+  max_response_length: 30720
+  seed: 0
+
+# Agent Configuration
+agent:
+  name: codeflow
+  max_steps: 20
+  trajectory_timeout: null
+  overlong_filter: False
+  agent_args: {}
+  engine_args: {}
+
+# Environment Configuration
+env:
+  name: custom
+  env_args: {}
+
+# Workflow Configuration
+workflow:
+  use_workflow: False
+  name: codeflow
+  workflow_args:
+    agent_cls: null
+    agent_args: {}
+    env_cls: null
+    env_args: {}
+    timeout: 1e6
+    gamma: 0.0 # no discounting
+    reward_bonus_coeff: 0.0 # no reward shaping
+  n_parallel_tasks: 256
+  # Limit only setup -> Gateway session creation. null preserves the legacy
+  # behavior (the window equals n_parallel_tasks).
+  rollout_startup_window: null
+  # DeNovo-only detached shadow capacity. 1.0 preserves the legacy aggregate
+  # count/CPU/memory budget; the DeNovo launch profile opts into 2.0.
+  denovo_shadow_overlap_budget_multiplier: 1.0
+  retry_limit: 3
+  raise_on_error: true
+  cancelled_teardown_timeout_seconds: 60
+  # Optional cleanup-only pool. null preserves shared lifecycle scheduling.
+  teardown_executor_workers: null
+  # Sandbox warm-pool prefetch for training (mirrors eval): 0 disables,
+  # negative matches the sandbox-creation frontier, positive = literal cap.
+  warm_queue_size: -1
+
+# Rollout configuration: backend-agnostic source of truth for sampling params.
+# For AgentFlow, rollout.{train,val} are attached to the gateway session and
+# enforced on every LLM call; extra keys (e.g. presence_penalty) pass through.
+# sync_config mirrors the core keys into actor_rollout_ref.rollout for verl's
+# native rollout.
+rollout:
+  n: 8
+  n_val: 1  # number of validation samples per prompt
+  # Only defaults the params every backend accepts. Set top_k / penalties / etc.
+  # explicitly (CLI or here) when your served backend supports them.
+  train:
+    temperature: 1.0
+    top_p: 1.0
+    max_tokens: ${rllm.data.max_response_length}
+  val:
+    temperature: 1.0
+    top_p: 1.0
+    max_tokens: ${rllm.data.max_response_length}
+
+# Trainer Configuration
+trainer:
+  total_epochs: 10
+  total_batches: -1
+  logger: ['console']  # Options: 'console', 'wandb', 'tensorboard'
+  project_name: 'rllm-training'
+  experiment_name: 'default'
+  test_freq: 5
+  save_freq: 20
+  val_before_train: false
+  val_only: false
+  wandb_mode: null # null, online, offline, disabled
+  wandb_dir: null
+  wandb_proxy: null
+  # Resume support for offline W&B. The training script exports prior scalar
+  # history to JSONL and a new run replays it before logging live steps.
+  wandb_replay_history_path: null
+  wandb_replay_through_step: null
+
+# Algorithm Configuration
+algorithm:
+  adv_estimator: grpo # [grpo, reinforce, reinforce_plus_plus_baseline, rloo]
+  norm_adv_by_std_in_grpo: true
+  use_rllm: null  # deprecated, unified trainer only support rllm advantage estimators
+  use_precomputed_advantage: false # use pre-computed step.advantage from the workflow (e.g. distillation)
+  loss_fn: null           # backend-specific values; null = backend default
+  loss_agg_mode: null     # [null, token-mean, seq-mean-token-sum, seq-mean-token-mean]
+  lr_schedule: constant   # [constant, linear, cosine]
+  warmup_steps: -1        # Absolute optimizer-step warmup; <=0 uses warmup_steps_ratio
+  warmup_steps_ratio: 0.0 # Fractional warmup fallback
+  kl_beta: 0.0            # KL penalty coefficient
+  eps_clip: 0.2           # PPO clip epsilon
+  eps_clip_high: null     # Asymmetric upper clip bound (null = symmetric)
+  router_replay: disabled # Router Replay: "disabled" | "R2" (training-side record) | "R3" (rollout-side record)
+  rollout_correction:
+    bypass_mode: null     # true = pi_old = pi_rollout, false = pi_old is computed (null = backend default)
+    tis_mode: null        # null = disabled, "token" or "sequence" = TIS importance sampling level
+    tis_cap: 2.0          # Upper clamp on TIS importance weight
+
+# Stepwise advantage
+# TODO(listar2000): deprecate the `per_step` mode and refactor this config.
+stepwise_advantage:
+  enable: False
+  mode: broadcast # `broadcast` or `per_step`
+  normalize_by_steps: False
+  outcome_weight: 1.0
+  tool_call_weight: 0.0
+  tool_call_correct_reward: 1.0
+  tool_call_incorrect_reward: 0.0
+  milestone:
+    enable: false
+    verification_enable: true
+    navigation_enable: true
+    format_enable: true
+    beta_any: 0.5
+    beta_frac: 0.5
+    verification_weight: 0.25
+    navigation_weight: 0.05
+    navigation_search_score: 0.2
+    navigation_read_score: 1.0
+    backward_credit_lambda: 0.2
+    backward_credit_gamma: 0.9
+    verification_reward_clip_lower: -6.0
+    verification_reward_clip_upper: 3.0
+
+# Disable thinking
+disable_thinking: False
+
+# Accumulate reasoning
+accumulate_reasoning: False
+
+# Mask truncated samples
+mask_truncated_samples: False
+filter_token_mismatch: True
+
+# Compact filtering
+compact_filtering:
+  enable: False
+  mask_max_prompt_length_exceeded: True
+  mask_max_context_length_exceeded: False
+  mask_max_response_length_exceeded: True
+  mask_env_done: False
+  mask_max_turns_exceeded: True
+  mask_timeout: True
+  mask_unknown: False
+  mask_error: True
+
+# Rejection sampling
+rejection_sample:
+  enable: False
+  multiplier: 1
+  min_partial_solve_tasks: 1
+  min_trajs_per_group: 2
+  filter_uniform_groups: false
+
+# Outcome-reward Dynamic Sampling. This is independent from rejection_sample's
+# legacy all-zero-advantage filtering.
+dynamic_sampling:
+  enable: false
+  # reward_uniform preserves the binary bug-repair behavior. Repo-generation
+  # training uses verifier_pass_count and classifies fractional verifier data.
+  outcome_mode: reward_uniform
+  max_easy_rejections: 3
+  max_hard_rejections: 5
+  easy_pass_rate_threshold: 0.9
+  hard_pass_rate_threshold: 0.1
+  # Fully-async only: speculative task groups admitted per sampling wave.
+  async_step_sampling_multiplier: 1.0
+  # A synchronous AgentFlow worker cannot be force-killed. Stop waiting for
+  # cancelled speculative surplus after this deadline and observe it detached.
+  cancel_wait_timeout_seconds: 120
+
+# Gateway Configuration (model gateway for AgentFlow-based training)
+gateway:
+  port: 9090
+  host: null          # Auto-detects routable IP; set explicitly to override
+  tunnel: null        # Reach gateway from remote sandboxes. Either a backend name ("cloudflared")
+                      # to auto-spawn a tunnel, or an http(s):// URL reachable from the sandbox
+                      # (your own tailscale IP, bore/ngrok/frp URL, internal DNS, etc.).
+  store: memory       # "memory" (non-persistent) | "sqlite" (writes traces to disk)
+  db_path: null       # Only used when store=sqlite; null → auto-resolved path (logged at startup)
+  # Preserve raw provider request/response copies by default. High-concurrency
+  # training can disable these because normalized trace fields are authoritative.
+  capture_raw_payloads: true
+  worker_recovery_timeout: 600
+  # Session cleanup is an independent control-plane pool. It bounds only
+  # tombstoned session reclamation, not model rollout concurrency.
+  session_cleanup_concurrency: 32
+  session_cleanup_phase_timeout: 30
+  session_cleanup_shutdown_timeout: 30
+  session_cleanup_max_pending: 4096
+  session_cleanup_stall_timeout: 600
+  worker_health_check_timeout: 15
+  worker_health_check_failure_threshold: 3
+  # During separated VERL weight updates, model requests wait at a gateway
+  # barrier and health-check failures are ignored through this post-update grace.
+  maintenance_health_grace_seconds: 120
+  # Recovery-only ramp for requests that were already queued at that barrier.
+  # Steady-state rollout concurrency is not limited by these values.
+  recovery_admission_rate_per_second: 64
+  recovery_admission_burst: 64
+  recovery_admission_jitter_seconds: 2
+  # Pace explicit rollout session creation so a completed sandbox setup wave
+  # cannot produce a gateway connection/first-request thundering herd.
+  session_start_admission_rate_per_second: 64
+  session_start_admission_burst: 64
+  # Weight-version and maintenance mutations use a dedicated client. A timed
+  # out POST is confirmed by GET before an idempotent retry.
+  weight_sync_control_timeout_seconds: 30
+  weight_sync_control_max_attempts: 5
+  weight_sync_control_retry_backoff_seconds: 1
+  # Fully-async process-sidecar watchdog. It pauses admission before recovery
+  # and permits one transparent restart; a repeated outage fails fast.
+  supervision:
+    enable: true
+    health_interval_seconds: 5
+    health_timeout_seconds: 2
+    failure_threshold: 3
+    max_restarts: 1
+    recovery_stall_timeout_seconds: 120
+  # Sampling params attached to a session overwrite those keys on every LLM call;
+  # keys not set pass through untouched.
+  cumulative_token_mode: false   # Drift-free multi-turn token forwarding: rewrites turn 2+ to
+                                 # /v1/completions with cumulative raw token IDs built by the renderer.
+                                 # The tokenizer is loaded from the served model path (model.name).
+  routing_policy: null  # Optional dotted custom policy class; incompatible with adaptive mode.
+  routing:
+    mode: sticky_least_loaded
+    migration_min_active_gap: 4
+    migration_sustain_seconds: 30
+    max_migrations_per_session: 1
+    metrics_interval_seconds: 30
+  renderer_family: auto  # renderers family for the cumulative-mode bridge. Renderers can auto infer it
+                         # if your input model.name is a huggingface model it. If model.name is a local
+                         # path, you must set this explicitly (e.g. qwen3, qwen3.5, qwen3.6, glm-5, 
+                         # deepseek-v3, gpt-oss). Check supported model families in MODEL_RENDERER_MAP of 
+                         # https://github.com/PrimeIntellect-ai/renderers/blob/main/renderers/base.py
+
+# Async Training Configuration
+async_training:
+  enable: false
+  # Full FSDP/NCCL training restores/syncs weights before any sampling.
+  # Avoid loading the same checkpoint on every standalone vLLM replica first.
+  skip_initial_rollout_weights: true
+  mini_batch_size: 64
+  fwd_bwd_group_size: null  # task batches per forward-backward pass (default: mini_batch_size)
+  staleness_threshold: 0.0
+  trigger_parameter_sync_step: 1
+  partial_rollout: false
+  # Standalone vLLM initialization is transactional: a failed attempt kills
+  # partial server/worker actors, removes placement groups, waits for the GPU
+  # reservation baseline, and then retries boundedly.
+  server_init_max_attempts: 3
+  server_init_retry_quiescence_seconds: 15
+  server_init_gpu_release_timeout_seconds: 300
+  episode_offload_dir: null       # NVMe offload dir for pending episodes (null = disabled)
+  trajectory_group_offload_dir: null  # NVMe offload dir for queued task batches (null = disabled)
+
+# Episode Logging Configuration
+episode_logging:
+  log_episodes: false
+  episode_log_dir: logs/${rllm.trainer.project_name}/${rllm.trainer.experiment_name}

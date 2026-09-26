@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "swe-mile"
+version = "0.1.0"
+description = "Asynchronous potential-induced milestone credit assignment for software engineering agents"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {file = "LICENSE"}
+classifiers = ["Programming Language :: Python :: 3", "License :: OSI Approved :: Apache Software License", "Operating System :: POSIX :: Linux"]
+dependencies = [
+    "rllm-model-gateway==0.1.0", "pydantic>=2", "PyYAML>=6", "openai", "httpx",
+    "tqdm", "requests", "datasets>=2.20", "pandas", "pyarrow", "polars", "numpy==1.26.4",
+    "hydra-core", "codetiming", "rich", "pillow", "wandb", "packaging",
+]
+
+[project.optional-dependencies]
+train = [
+    "verl==0.8.0", "torch==2.10.0", "ray==2.54.0", "vllm==0.17.0",
+    "transformers==5.8.0", "renderers==0.1.11", "qwen-vl-utils==0.0.14",
+]
+
+[tool.uv.sources]
+rllm-model-gateway = {path = "./rllm-model-gateway", editable = true}
+
+[tool.uv]
+override-dependencies = ["transformers==5.8.0", "numpy==1.26.4"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["rllm", "rllm.*", "launch"]
+
+[tool.setuptools.package-data]
+launch = ["*.sh"]
+rllm = ["trainer/config/**/*.yaml", "trainer/config/*.yaml", "registry/*.json", "data/assets/*.sh", "data/assets/*.py", "patches/*.patch"]

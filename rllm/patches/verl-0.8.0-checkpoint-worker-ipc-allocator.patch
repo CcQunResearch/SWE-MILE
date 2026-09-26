@@ -1,0 +1,19 @@
+diff --git a/verl/checkpoint_engine/base.py b/verl/checkpoint_engine/base.py
+--- a/verl/checkpoint_engine/base.py
++++ b/verl/checkpoint_engine/base.py
+@@ -293,5 +293,15 @@ class CheckpointEngineWorker(Worker):
+         **kwargs,
+     ) -> None:
+         super().__init__()
++
++        # This process owns checkpoint/NCCL transfer buffers that are exported
++        # to the colocated inference worker through CUDA IPC.  Expandable CUDA
++        # allocations require pidfd_getfd when imported by another process,
++        # which is unavailable on some cluster kernels.  Keep expandable
++        # segments enabled for trainer and vLLM processes, but allocate this
++        # worker's IPC buffers with the traditional CUDA allocator.
++        from verl.utils.device import set_expandable_segments
++
++        set_expandable_segments(False)
+         self.rollout_config = rollout_config
+         self.model_config = model_config

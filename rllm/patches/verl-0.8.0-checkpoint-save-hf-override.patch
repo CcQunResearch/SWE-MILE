@@ -1,0 +1,147 @@
+diff --git a/verl/utils/checkpoint/fsdp_checkpoint_manager.py b/verl/utils/checkpoint/fsdp_checkpoint_manager.py
+index 38d22b5..fe529aa 100644
+--- a/verl/utils/checkpoint/fsdp_checkpoint_manager.py
++++ b/verl/utils/checkpoint/fsdp_checkpoint_manager.py
+@@ -217,7 +217,14 @@ class FSDPCheckpointManager(BaseCheckpointManager):
+         # wait for everyone to load checkpoints
+         torch.distributed.barrier()
+ 
+-    def save_checkpoint(self, local_path: str, hdfs_path: str = None, global_step: int = 0, max_ckpt_to_keep=None):
++    def save_checkpoint(
++        self,
++        local_path: str,
++        hdfs_path: str = None,
++        global_step: int = 0,
++        max_ckpt_to_keep=None,
++        save_hf_model=None,
++    ):
+         """
+         Save an FSDP checkpoint for this rank.
+ 
+@@ -338,7 +345,8 @@ class FSDPCheckpointManager(BaseCheckpointManager):
+         # wait for everyone to dump to local
+         torch.distributed.barrier()
+ 
+-        if self.should_save_hf_model:
++        should_save_hf_model = self.should_save_hf_model and save_hf_model is not False
++        if should_save_hf_model:
+             # Only rank 0 will save hf model and,
+             # offload to cpu to save LLMs which may be too large to fit in one GPU
+             state_dict = get_fsdp_full_state_dict(self.model, offload_to_cpu=True, rank0_only=True)
+diff --git a/verl/utils/checkpoint/megatron_checkpoint_manager.py b/verl/utils/checkpoint/megatron_checkpoint_manager.py
+index 373b156..cb413e7 100644
+--- a/verl/utils/checkpoint/megatron_checkpoint_manager.py
++++ b/verl/utils/checkpoint/megatron_checkpoint_manager.py
+@@ -677,7 +677,14 @@ class MegatronCheckpointManager(BaseCheckpointManager):
+                     logger=logger,
+                 )
+ 
+-    def save_checkpoint(self, local_path: str, hdfs_path: str = None, global_step: int = 0, max_ckpt_to_keep=None):
++    def save_checkpoint(
++        self,
++        local_path: str,
++        hdfs_path: str = None,
++        global_step: int = 0,
++        max_ckpt_to_keep=None,
++        save_hf_model=None,
++    ):
+         # record the previous global step
+         self.previous_global_step = global_step
+ 
+@@ -817,7 +824,8 @@ class MegatronCheckpointManager(BaseCheckpointManager):
+                         default=lambda o: o.to_dict() if hasattr(o, "to_dict") else o,
+                     )
+ 
+-        if self.should_save_hf_model and not self.use_hf_checkpoint:
++        should_save_hf_model = self.should_save_hf_model and save_hf_model is not False
++        if should_save_hf_model and not self.use_hf_checkpoint:
+             # wait for everyone to dump to local
+             if self.bridge is not None:
+                 hf_model_ckpt_path = get_hf_model_checkpoint_path(local_path)
+diff --git a/verl/workers/engine/fsdp/transformer_impl.py b/verl/workers/engine/fsdp/transformer_impl.py
+index 2c66c6a..6b9f416 100644
+--- a/verl/workers/engine/fsdp/transformer_impl.py
++++ b/verl/workers/engine/fsdp/transformer_impl.py
+@@ -762,7 +762,11 @@ class FSDPEngine(BaseEngine):
+             load_fsdp_model_to_gpu(self.module)
+ 
+         self.checkpoint_manager.save_checkpoint(
+-            local_path=local_path, hdfs_path=hdfs_path, global_step=global_step, max_ckpt_to_keep=max_ckpt_to_keep
++            local_path=local_path,
++            hdfs_path=hdfs_path,
++            global_step=global_step,
++            max_ckpt_to_keep=max_ckpt_to_keep,
++            save_hf_model=kwargs.get("save_hf_model"),
+         )
+ 
+         torch.distributed.barrier()
+diff --git a/verl/workers/engine/megatron/transformer_impl.py b/verl/workers/engine/megatron/transformer_impl.py
+index 93e98f2..6e830c3 100644
+--- a/verl/workers/engine/megatron/transformer_impl.py
++++ b/verl/workers/engine/megatron/transformer_impl.py
+@@ -574,7 +574,11 @@ class MegatronEngine(BaseEngine):
+         if self._is_offload_param or origin_module_device == "cpu":
+             load_megatron_model_to_gpu(self.module, load_grad=True)
+         self.checkpoint_mananager.save_checkpoint(
+-            local_path=local_path, hdfs_path=hdfs_path, global_step=global_step, max_ckpt_to_keep=max_ckpt_to_keep
++            local_path=local_path,
++            hdfs_path=hdfs_path,
++            global_step=global_step,
++            max_ckpt_to_keep=max_ckpt_to_keep,
++            save_hf_model=kwargs.get("save_hf_model"),
+         )
+         torch.distributed.barrier()
+         if self._is_offload_param:
+diff --git a/verl/workers/engine_workers.py b/verl/workers/engine_workers.py
+index bf379b4..bc69c8b 100644
+--- a/verl/workers/engine_workers.py
++++ b/verl/workers/engine_workers.py
+@@ -423,8 +423,21 @@ class TrainingWorker(Worker, DistProfilerExtension):
+         return final_output
+ 
+     @register(dispatch_mode=Dispatch.ONE_TO_ALL)
+-    def save_checkpoint(self, local_path, hdfs_path=None, global_step=0, max_ckpt_to_keep=None):
+-        return self.engine.save_checkpoint(local_path, hdfs_path, global_step, max_ckpt_to_keep)
++    def save_checkpoint(
++        self,
++        local_path,
++        hdfs_path=None,
++        global_step=0,
++        max_ckpt_to_keep=None,
++        save_hf_model=None,
++    ):
++        return self.engine.save_checkpoint(
++            local_path,
++            hdfs_path,
++            global_step,
++            max_ckpt_to_keep,
++            save_hf_model=save_hf_model,
++        )
+ 
+     @register(dispatch_mode=Dispatch.ONE_TO_ALL)
+     def load_checkpoint(self, local_path, hdfs_path=None, del_local_after_load=False):
+@@ -659,9 +672,22 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
+         self.actor.load_checkpoint(local_path, hdfs_path, del_local_after_load)
+ 
+     @register(dispatch_mode=Dispatch.ONE_TO_ALL)
+-    def save_checkpoint(self, local_path, hdfs_path=None, global_step=0, max_ckpt_to_keep=None):
++    def save_checkpoint(
++        self,
++        local_path,
++        hdfs_path=None,
++        global_step=0,
++        max_ckpt_to_keep=None,
++        save_hf_model=None,
++    ):
+         assert "actor" in self.role, "save_checkpoint only support actor role"
+-        self.actor.save_checkpoint(local_path, hdfs_path, global_step, max_ckpt_to_keep)
++        self.actor.save_checkpoint(
++            local_path,
++            hdfs_path,
++            global_step,
++            max_ckpt_to_keep,
++            save_hf_model=save_hf_model,
++        )
+ 
+     @register(dispatch_mode=Dispatch.ONE_TO_ALL, blocking=False)
+     async def update_weights(self, global_steps: int = None, mode: str = "auto"):

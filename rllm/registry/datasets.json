@@ -1,0 +1,110 @@
+{
+  "version": 1,
+  "datasets": {
+    "r2egym": {
+      "description": "R2E-Gym Subset: 4,578 Python SWE tasks across 12 repos (aiohttp, orange3, numpy, pandas, pillow, scrapy, ...), per-instance Docker images at namanjain12/* graded by the image's own /testbed/run_tests.sh (pytest-output equality against expected_output_json)",
+      "source": "R2E-Gym/R2E-Gym-Subset",
+      "builder": "rllm.data.r2egym_builder:build_benchmark",
+      "category": "code",
+      "splits": [
+        "train"
+      ],
+      "eval_split": "train",
+      "train_split": "train",
+      "default_agent": "codeflow"
+    },
+    "r2egym_lite": {
+      "description": "R2E-Gym Lite: ~11.8K rows across train + dev_*pr_v* splits (3.66 GB total), same image namespace and verifier as r2egym",
+      "source": "R2E-Gym/R2E-Gym-Lite",
+      "builder": "rllm.data.r2egym_builder:build_benchmark",
+      "category": "code",
+      "splits": [
+        "train"
+      ],
+      "eval_split": "train",
+      "train_split": "train",
+      "default_agent": "codeflow"
+    },
+    "swe-rebench-v2-filtered-verified-python": {
+      "description": "Materialize with launch/prepare_dataset.sh",
+      "source": "PrimeIntellect/SWE-rebench-V2-Filtered-Verified",
+      "category": "code",
+      "splits": [
+        "train"
+      ],
+      "eval_split": "train",
+      "default_agent": "codeflow"
+    },
+    "swe-rebench-v2-filtered-verified-promatched": {
+      "description": "Materialize with launch/prepare_dataset.sh",
+      "source": "PrimeIntellect/SWE-rebench-V2-Filtered-Verified",
+      "category": "code",
+      "splits": [
+        "train"
+      ],
+      "eval_split": "train",
+      "default_agent": "codeflow"
+    },
+    "denovoswe": {
+      "description": "Materialize with launch/prepare_dataset.sh",
+      "source": "AweAI-Team/DeNovoSWE",
+      "category": "code",
+      "splits": [
+        "train"
+      ],
+      "eval_split": "train",
+      "default_agent": "codeflow"
+    },
+    "nl2repo-bench": {
+      "description": "Materialize with launch/prepare_dataset.sh",
+      "source": "AweAI-Team/AweAgent-Meta-NL2Repo",
+      "category": "code",
+      "splits": [
+        "test"
+      ],
+      "eval_split": "test",
+      "default_agent": "codeflow"
+    },
+    "beyondswe-doc2repo": {
+      "description": "Materialize with launch/prepare_dataset.sh",
+      "source": "AweAI-Team/BeyondSWE-harbor",
+      "category": "code",
+      "splits": [
+        "test"
+      ],
+      "eval_split": "test",
+      "default_agent": "codeflow"
+    },
+    "swe_bench_verified": {
+      "description": "Materialize with launch/prepare_dataset.sh",
+      "source": "R2E-Gym/SWE-Bench-Verified",
+      "category": "code",
+      "splits": [
+        "test"
+      ],
+      "eval_split": "test",
+      "default_agent": "codeflow"
+    },
+    "swe-rebench-v2-filtered-verified": {
+      "description": "Materialize with launch/prepare_dataset.sh",
+      "source": "PrimeIntellect/SWE-rebench-V2-Filtered-Verified",
+      "category": "code",
+      "splits": [
+        "train"
+      ],
+      "eval_split": "train",
+      "default_agent": "codeflow"
+    },
+    "swebench_pro_public": {
+      "description": "SWE-bench Pro (Public): 731 enterprise-grade SWE tasks across 41 repos, evaluated against pre-built jefzda/sweap-images Docker images (Harbor format; F2P/P2P verifier)",
+      "source": "ScaleAI/SWE-bench_Pro",
+      "builder": "rllm.data.swebench_pro_builder:build_benchmark",
+      "category": "code",
+      "splits": [
+        "test"
+      ],
+      "eval_split": "test",
+      "default_agent": "codeflow"
+    }
+  }
+}

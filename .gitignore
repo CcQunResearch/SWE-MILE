@@ -1,0 +1,28 @@
+# Python caches and build artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# Local credentials and environment settings
+.env
+.env.*
+!.env.example
+!.env.template
+
+# Local training outputs
+wandb/
+checkpoints/
+outputs/
+*.log
+
+# Coverage and editor artifacts
+.coverage
+htmlcov/
+.DS_Store

@@ -1,0 +1,140 @@
+--- a/verl/workers/engine/__init__.py
++++ b/verl/workers/engine/__init__.py
+@@ -21,44 +21,77 @@
+     "FSDPEngineWithLMHead",
+ ]
+ 
+-try:
+-    from .torchtitan import TorchTitanEngine, TorchTitanEngineWithLMHead
++# Optional backends may initialize CUDA at import time. FSDP must not import
++# them merely to obtain the registry. Keep their original registration order
++# (in particular MindSpeed before Megatron) when they are explicitly needed.
++_OPTIONAL_ENGINE_NAMES = ('TorchTitanEngine', 'TorchTitanEngineWithLMHead', 'VeOmniEngine', 'VeOmniEngineWithLMHead', 'AutomodelEngine', 'AutomodelEngineWithLMHead', 'MindspeedEngineWithLMHead', 'MindspeedEngineWithValueHead', 'MindSpeedMegatronEngineWithLMHead', 'MegatronEngine', 'MegatronEngineWithLMHead', 'MegatronEngineWithValueHead')
++_optional_engines_loaded = False
+ 
+-    __all__ += ["TorchTitanEngine", "TorchTitanEngineWithLMHead"]
+-except ImportError:
+-    TorchTitanEngine = None
+-    TorchTitanEngineWithLMHead = None
+ 
+-try:
+-    from .veomni import VeOmniEngine, VeOmniEngineWithLMHead
++def _load_optional_engines():
++    global _optional_engines_loaded, __all__
++    global TorchTitanEngine
++    global TorchTitanEngineWithLMHead
++    global VeOmniEngine
++    global VeOmniEngineWithLMHead
++    global AutomodelEngine
++    global AutomodelEngineWithLMHead
++    global MindspeedEngineWithLMHead
++    global MindspeedEngineWithValueHead
++    global MindSpeedMegatronEngineWithLMHead
++    global MegatronEngine
++    global MegatronEngineWithLMHead
++    global MegatronEngineWithValueHead
+ 
+-    __all__ += ["VeOmniEngine", "VeOmniEngineWithLMHead"]
+-except ImportError:
+-    VeOmniEngine = None
+-    VeOmniEngineWithLMHead = None
++    if _optional_engines_loaded:
++        return
++    try:
++        from .torchtitan import TorchTitanEngine, TorchTitanEngineWithLMHead
+ 
+-try:
+-    from .automodel import AutomodelEngine, AutomodelEngineWithLMHead
++        __all__ += ["TorchTitanEngine", "TorchTitanEngineWithLMHead"]
++    except ImportError:
++        TorchTitanEngine = None
++        TorchTitanEngineWithLMHead = None
+ 
+-    __all__ += ["AutomodelEngine", "AutomodelEngineWithLMHead"]
+-except ImportError:
+-    AutomodelEngine = None
+-    AutomodelEngineWithLMHead = None
++    try:
++        from .veomni import VeOmniEngine, VeOmniEngineWithLMHead
+ 
+-# Mindspeed must be imported before Megatron to ensure the related monkey patches take effect as expected
+-try:
+-    from .mindspeed import MindspeedEngineWithLMHead, MindspeedEngineWithValueHead, MindSpeedMegatronEngineWithLMHead
++        __all__ += ["VeOmniEngine", "VeOmniEngineWithLMHead"]
++    except ImportError:
++        VeOmniEngine = None
++        VeOmniEngineWithLMHead = None
+ 
+-    __all__ += ["MindspeedEngineWithLMHead", "MindspeedEngineWithValueHead", "MindSpeedMegatronEngineWithLMHead"]
+-except ImportError:
+-    MindspeedEngineWithLMHead = None
+-    MindspeedEngineWithValueHead = None
+-    MindSpeedMegatronEngineWithLMHead = None
++    try:
++        from .automodel import AutomodelEngine, AutomodelEngineWithLMHead
+ 
+-try:
+-    from .megatron import MegatronEngine, MegatronEngineWithLMHead, MegatronEngineWithValueHead
++        __all__ += ["AutomodelEngine", "AutomodelEngineWithLMHead"]
++    except ImportError:
++        AutomodelEngine = None
++        AutomodelEngineWithLMHead = None
+ 
+-    __all__ += ["MegatronEngine", "MegatronEngineWithLMHead", "MegatronEngineWithValueHead"]
+-except ImportError:
+-    MegatronEngine = None
+-    MegatronEngineWithLMHead = None
++    # Mindspeed must be imported before Megatron to ensure the related monkey patches take effect as expected
++    try:
++        from .mindspeed import MindspeedEngineWithLMHead, MindspeedEngineWithValueHead, MindSpeedMegatronEngineWithLMHead
++
++        __all__ += ["MindspeedEngineWithLMHead", "MindspeedEngineWithValueHead", "MindSpeedMegatronEngineWithLMHead"]
++    except ImportError:
++        MindspeedEngineWithLMHead = None
++        MindspeedEngineWithValueHead = None
++        MindSpeedMegatronEngineWithLMHead = None
++
++    try:
++        from .megatron import MegatronEngine, MegatronEngineWithLMHead, MegatronEngineWithValueHead
++
++        __all__ += ["MegatronEngine", "MegatronEngineWithLMHead", "MegatronEngineWithValueHead"]
++    except ImportError:
++        MegatronEngine = None
++        MegatronEngineWithLMHead = None
++
++    _optional_engines_loaded = True
++
++
++def __getattr__(name):
++    if name in _OPTIONAL_ENGINE_NAMES:
++        _load_optional_engines()
++        return globals()[name]
++    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+--- a/verl/workers/engine/base.py
++++ b/verl/workers/engine/base.py
+@@ -312,6 +312,10 @@
+ 
+     @classmethod
+     def get_engine_cls(cls, model_type: str, backend: str):
++        if backend in {"megatron", "mindspeed_megatron", "torchtitan", "veomni", "automodel"}:
++            from verl.workers.engine import _load_optional_engines
++
++            _load_optional_engines()
+         assert model_type in cls._engines, f"Unknown model_type: {model_type}"
+         assert backend in cls._engines[model_type], f"Unknown backend: {backend}"
+         device = get_device_name()
+--- a/verl/workers/engine_workers.py
++++ b/verl/workers/engine_workers.py
+@@ -83,6 +83,12 @@
+     def __init__(self, config: TrainingWorkerConfig):
+         Worker.__init__(self)
+ 
++        # Check the Ray-assigned device before optional imports or collectives.
++        if get_device_name() == "cuda":
++            from rllm.utils.cuda_startup import initialize_cuda_worker
++
++            initialize_cuda_worker()
++
+         from verl.workers.engine import BaseEngine, EngineRegistry
+ 
+         initialize_global_process_group_ray(timeout_second=None)

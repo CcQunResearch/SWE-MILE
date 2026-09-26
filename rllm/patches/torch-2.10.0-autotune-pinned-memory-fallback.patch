@@ -1,0 +1,32 @@
+--- a/torch/_inductor/runtime/triton_heuristics.py
++++ b/torch/_inductor/runtime/triton_heuristics.py
+@@ -964,7 +964,10 @@
+                 )
+                 size = required_storage_length * arg.element_size()
+                 if size > budget:
+-                    cpu_arg = torch.empty_strided(
++                    from rllm.utils.pinned_memory import allocate_pinned_cpu
++
++                    cpu_arg = allocate_pinned_cpu(
++                        torch.empty_strided,
+                         (required_storage_length,),
+                         (1,),
+                         dtype=arg.dtype,
+@@ -973,7 +976,7 @@
+                     )
+                     cpu_arg.copy_(
+                         arg.as_strided((required_storage_length,), (1,)),
+-                        non_blocking=True,
++                        non_blocking=cpu_arg.is_pinned(),
+                     )
+                     copies[name] = (arg, cpu_arg)
+                 else:
+@@ -996,7 +999,7 @@
+                 0,
+             )
+             arg.as_strided((required_storage_length,), (1,)).copy_(
+-                cpu_arg, non_blocking=True
++                cpu_arg, non_blocking=cpu_arg.is_pinned()
+             )
+ 
+     def reset_to_zero_args(self, *args, **kwargs):
